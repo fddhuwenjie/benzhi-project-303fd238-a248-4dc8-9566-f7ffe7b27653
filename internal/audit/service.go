@@ -14,9 +14,8 @@ import (
 )
 
 type Service struct {
-	Repo       *repository.Repository
-	mu         sync.Mutex
-	lastDigest string
+	Repo *repository.Repository
+	mu   sync.Mutex
 }
 
 type ActionStat struct {
@@ -50,12 +49,29 @@ func digest(v interface{}) string {
 func (s *Service) Append(ctx context.Context, caseID, requestID, action, actor, from, to string, payload interface{}) (Event, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	ev := Event{EventID: fmt.Sprintf("evt-%d", time.Now().UnixNano()), CaseID: caseID, RequestID: requestID, Action: action, Actor: actor, FromStatus: from, ToStatus: to, PayloadDigest: digest(payload), PreviousDigest: s.lastDigest, CreatedAt: time.Now().UTC(), Payload: payload}
+	prev, err := s.tailDigestLocked(ctx, caseID)
+	if err != nil {
+		return Event{}, err
+	}
+	ev := Event{EventID: fmt.Sprintf("evt-%d", time.Now().UnixNano()), CaseID: caseID, RequestID: requestID, Action: action, Actor: actor, FromStatus: from, ToStatus: to, PayloadDigest: digest(payload), PreviousDigest: prev, CreatedAt: time.Now().UTC(), Payload: payload}
 	if err := s.Repo.AddAudit(ctx, ev); err != nil {
 		return Event{}, err
 	}
-	s.lastDigest = ev.PayloadDigest
 	return ev, nil
+}
+
+// tailDigestLocked 返回指定个案当前最后一条事件的 PayloadDigest；
+// 个案没有既有记录时返回空串，使其首条事件使用空 previous_digest。
+// 调用方必须持有 s.mu。
+func (s *Service) tailDigestLocked(ctx context.Context, caseID string) (string, error) {
+	existing, err := s.Repo.ListAudit(ctx, caseID)
+	if err != nil {
+		return "", err
+	}
+	if len(existing) == 0 {
+		return "", nil
+	}
+	return existing[len(existing)-1].PayloadDigest, nil
 }
 func (s *Service) Timeline(ctx context.Context, id string) ([]Event, error) {
 	return s.Repo.ListAudit(ctx, id)
