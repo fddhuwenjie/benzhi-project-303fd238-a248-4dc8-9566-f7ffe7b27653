@@ -220,6 +220,21 @@ func (s *Service) ClaimReview(ctx context.Context, id, actor, requestID string, 
 	if actor == "" {
 		return repository.ReviewClaim{}, errors.New("质检员不能为空")
 	}
+	fp := repository.Fingerprint(struct {
+		ID       string
+		Actor    string
+		Expected int
+	}{id, actor, expected})
+	if requestID != "" {
+		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
+			return repository.ReviewClaim{}, e
+		} else if old != "" {
+			if claim, er := s.Repo.PeekReviewClaim(ctx, id); er == nil {
+				return claim, nil
+			}
+			return repository.ReviewClaim{}, errors.New("认领记录已不存在")
+		}
+	}
 	c, e := s.Repo.GetCase(ctx, id)
 	if e != nil {
 		return repository.ReviewClaim{}, e
@@ -239,6 +254,9 @@ func (s *Service) ClaimReview(ctx context.Context, id, actor, requestID string, 
 		action = "review_claim_renew"
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, action, actor, string(c.Status), string(c.Status), map[string]interface{}{"claim": claim, "previous_actor": old.Actor})
+	if e == nil && requestID != "" {
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	}
 	return claim, e
 }
 func (s *Service) ReleaseReviewClaim(ctx context.Context, id, actor, requestID string) (repository.ReviewClaim, error) {

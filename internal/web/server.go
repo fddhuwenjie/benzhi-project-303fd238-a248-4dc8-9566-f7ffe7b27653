@@ -333,7 +333,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			code := 400
 			var ce *repository.ClaimConflictError
-			if errors.As(e, &ce) || errors.Is(e, repository.ErrRevision) {
+			if errors.As(e, &ce) || errors.Is(e, repository.ErrRevision) || errors.Is(e, repository.ErrIdempotency) {
 				code = 409
 			}
 			if errors.Is(e, repository.ErrNotFound) {
