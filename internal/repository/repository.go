@@ -112,7 +112,10 @@ func (r *Repository) Close() error {
 	return os.WriteFile(r.path, b, 0600)
 }
 func (r *Repository) DB() interface{} { return nil }
-func (r *Repository) SaveCase(_ context.Context, c model.ObservationCase, expected int) error {
+func (r *Repository) SaveCase(ctx context.Context, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
@@ -122,7 +125,10 @@ func (r *Repository) SaveCase(_ context.Context, c model.ObservationCase, expect
 	r.persist()
 	return nil
 }
-func (r *Repository) SaveCaseNoOverlap(_ context.Context, c model.ObservationCase, expected int) error {
+func (r *Repository) SaveCaseNoOverlap(ctx context.Context, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
@@ -141,7 +147,10 @@ func (r *Repository) SaveCaseNoOverlap(_ context.Context, c model.ObservationCas
 	return nil
 }
 
-func (r *Repository) SaveMetadataNoOverlap(_ context.Context, c model.ObservationCase, expected int) error {
+func (r *Repository) SaveMetadataNoOverlap(ctx context.Context, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	old, ok := r.cases[c.CaseID]
@@ -160,7 +169,10 @@ func (r *Repository) SaveMetadataNoOverlap(_ context.Context, c model.Observatio
 	r.persist()
 	return nil
 }
-func (r *Repository) GetCase(_ context.Context, id string) (model.ObservationCase, error) {
+func (r *Repository) GetCase(ctx context.Context, id string) (model.ObservationCase, error) {
+	if err := ctx.Err(); err != nil {
+		return model.ObservationCase{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.cases[id]
@@ -169,7 +181,10 @@ func (r *Repository) GetCase(_ context.Context, id string) (model.ObservationCas
 	}
 	return c, nil
 }
-func (r *Repository) ListCases(_ context.Context) ([]model.ObservationCase, error) {
+func (r *Repository) ListCases(ctx context.Context) ([]model.ObservationCase, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	o := make([]model.ObservationCase, 0, len(r.cases))
@@ -179,7 +194,10 @@ func (r *Repository) ListCases(_ context.Context) ([]model.ObservationCase, erro
 	return o, nil
 }
 
-func (r *Repository) QueryCases(_ context.Context, f CaseFilter) (CasePage, error) {
+func (r *Repository) QueryCases(ctx context.Context, f CaseFilter) (CasePage, error) {
+	if err := ctx.Err(); err != nil {
+		return CasePage{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	all := make([]model.ObservationCase, 0, len(r.cases))
@@ -275,21 +293,30 @@ func (r *Repository) QueryCases(_ context.Context, f CaseFilter) (CasePage, erro
 	}
 	return CasePage{Cases: page, NextCursor: next, Counts: counts, Total: len(all), Claims: claims}, nil
 }
-func (r *Repository) SaveEvidence(_ context.Context, e model.CalibrationEvidence) error {
+func (r *Repository) SaveEvidence(ctx context.Context, e model.CalibrationEvidence) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evidence[e.CaseID] = append(r.evidence[e.CaseID], e)
 	r.persist()
 	return nil
 }
-func (r *Repository) SaveEvidenceBatch(_ context.Context, id string, evs []model.CalibrationEvidence) error {
+func (r *Repository) SaveEvidenceBatch(ctx context.Context, id string, evs []model.CalibrationEvidence) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.evidence[id] = append(r.evidence[id], evs...)
 	r.persist()
 	return nil
 }
-func (r *Repository) SaveEvidenceAndCase(_ context.Context, id string, evs []model.CalibrationEvidence, c model.ObservationCase, expected int) error {
+func (r *Repository) SaveEvidenceAndCase(ctx context.Context, id string, evs []model.CalibrationEvidence, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if expected > 0 && r.cases[id].Revision != expected {
@@ -300,7 +327,10 @@ func (r *Repository) SaveEvidenceAndCase(_ context.Context, id string, evs []mod
 	r.persist()
 	return nil
 }
-func (r *Repository) HasOverlap(_ context.Context, buoy string, start, end time.Time) (bool, error) {
+func (r *Repository) HasOverlap(ctx context.Context, buoy string, start, end time.Time) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, c := range r.cases {
@@ -311,7 +341,10 @@ func (r *Repository) HasOverlap(_ context.Context, buoy string, start, end time.
 	return false, nil
 }
 
-func (r *Repository) FindOverlaps(_ context.Context, buoy string, start, end time.Time) ([]Overlap, error) {
+func (r *Repository) FindOverlaps(ctx context.Context, buoy string, start, end time.Time) ([]Overlap, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := []Overlap{}
@@ -331,13 +364,19 @@ func (r *Repository) FindOverlaps(_ context.Context, buoy string, start, end tim
 func (r *Repository) QueryOverlaps(ctx context.Context, buoy string, start, end time.Time) ([]Overlap, error) {
 	return r.FindOverlaps(ctx, buoy, start, end)
 }
-func (r *Repository) ListEvidence(_ context.Context, id string) ([]model.CalibrationEvidence, error) {
+func (r *Repository) ListEvidence(ctx context.Context, id string) ([]model.CalibrationEvidence, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]model.CalibrationEvidence(nil), r.evidence[id]...), nil
 }
 
-func (r *Repository) ListEvidenceSorted(_ context.Context, id string) ([]model.CalibrationEvidence, error) {
+func (r *Repository) ListEvidenceSorted(ctx context.Context, id string) ([]model.CalibrationEvidence, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := append([]model.CalibrationEvidence(nil), r.evidence[id]...)
@@ -353,7 +392,10 @@ func (r *Repository) ListEvidenceSorted(_ context.Context, id string) ([]model.C
 	return out, nil
 }
 
-func (r *Repository) SupersedeEvidence(_ context.Context, id, oldID string, replacement model.CalibrationEvidence, c model.ObservationCase, expected int) error {
+func (r *Repository) SupersedeEvidence(ctx context.Context, id, oldID string, replacement model.CalibrationEvidence, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.cases[id].Revision != expected {
@@ -392,7 +434,10 @@ func (r *Repository) SupersedeEvidence(_ context.Context, id, oldID string, repl
 	return nil
 }
 
-func (r *Repository) EvidenceReferences(_ context.Context, id, evidenceID string) []string {
+func (r *Repository) EvidenceReferences(ctx context.Context, id, evidenceID string) []string {
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	refs := []string{}
@@ -424,7 +469,10 @@ func (r *Repository) EvidenceReferences(_ context.Context, id, evidenceID string
 	sort.Strings(refs)
 	return refs
 }
-func (r *Repository) SaveReview(_ context.Context, q model.QualityReview) error {
+func (r *Repository) SaveReview(ctx context.Context, q model.QualityReview) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reviews[q.CaseID] = q
@@ -432,7 +480,10 @@ func (r *Repository) SaveReview(_ context.Context, q model.QualityReview) error 
 	return nil
 }
 
-func (r *Repository) SaveReviewAndCase(_ context.Context, q model.QualityReview, c model.ObservationCase, expected int, clearClaim bool) error {
+func (r *Repository) SaveReviewAndCase(ctx context.Context, q model.QualityReview, c model.ObservationCase, expected int, clearClaim bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.cases[c.CaseID].Revision != expected {
@@ -447,7 +498,10 @@ func (r *Repository) SaveReviewAndCase(_ context.Context, q model.QualityReview,
 	return nil
 }
 
-func (r *Repository) ClaimReview(_ context.Context, id, actor string, expected int, now time.Time, lease time.Duration) (ReviewClaim, bool, error) {
+func (r *Repository) ClaimReview(ctx context.Context, id, actor string, expected int, now time.Time, lease time.Duration) (ReviewClaim, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewClaim{}, false, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, ok := r.cases[id]
@@ -472,7 +526,10 @@ func (r *Repository) ClaimReview(_ context.Context, id, actor string, expected i
 	return claim, actionReassign, nil
 }
 
-func (r *Repository) GetReviewClaim(_ context.Context, id string, now time.Time) (ReviewClaim, error) {
+func (r *Repository) GetReviewClaim(ctx context.Context, id string, now time.Time) (ReviewClaim, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewClaim{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.claims[id]
@@ -481,7 +538,10 @@ func (r *Repository) GetReviewClaim(_ context.Context, id string, now time.Time)
 	}
 	return c, nil
 }
-func (r *Repository) PeekReviewClaim(_ context.Context, id string) (ReviewClaim, error) {
+func (r *Repository) PeekReviewClaim(ctx context.Context, id string) (ReviewClaim, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewClaim{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	c, ok := r.claims[id]
@@ -491,7 +551,10 @@ func (r *Repository) PeekReviewClaim(_ context.Context, id string) (ReviewClaim,
 	return c, nil
 }
 
-func (r *Repository) ReleaseReviewClaim(_ context.Context, id, actor string) (ReviewClaim, error) {
+func (r *Repository) ReleaseReviewClaim(ctx context.Context, id, actor string) (ReviewClaim, error) {
+	if err := ctx.Err(); err != nil {
+		return ReviewClaim{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	c, ok := r.claims[id]
@@ -505,7 +568,10 @@ func (r *Repository) ReleaseReviewClaim(_ context.Context, id, actor string) (Re
 	r.persist()
 	return c, nil
 }
-func (r *Repository) SaveReviewSnapshot(_ context.Context, q model.QualityReview) error {
+func (r *Repository) SaveReviewSnapshot(ctx context.Context, q model.QualityReview) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.history[q.CaseID] = append(r.history[q.CaseID], q)
@@ -515,14 +581,20 @@ func (r *Repository) SaveReviewSnapshot(_ context.Context, q model.QualityReview
 func (r *Repository) SaveScreenSnapshot(ctx context.Context, q model.QualityReview) error {
 	return r.SaveReviewSnapshot(ctx, q)
 }
-func (r *Repository) ListReviewHistory(_ context.Context, id string) ([]model.QualityReview, error) {
+func (r *Repository) ListReviewHistory(ctx context.Context, id string) ([]model.QualityReview, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := append([]model.QualityReview(nil), r.history[id]...)
 	sort.Slice(out, func(i, j int) bool { return out[i].RunAt.Before(out[j].RunAt) })
 	return out, nil
 }
-func (r *Repository) GetReview(_ context.Context, id string) (model.QualityReview, error) {
+func (r *Repository) GetReview(ctx context.Context, id string) (model.QualityReview, error) {
+	if err := ctx.Err(); err != nil {
+		return model.QualityReview{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	q, ok := r.reviews[id]
@@ -531,14 +603,20 @@ func (r *Repository) GetReview(_ context.Context, id string) (model.QualityRevie
 	}
 	return q, nil
 }
-func (r *Repository) SaveBundle(_ context.Context, b Bundle) error {
+func (r *Repository) SaveBundle(ctx context.Context, b Bundle) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bundles[b.CaseID] = b
 	r.persist()
 	return nil
 }
-func (r *Repository) SaveBundleAndCase(_ context.Context, b Bundle, c model.ObservationCase, expected int) error {
+func (r *Repository) SaveBundleAndCase(ctx context.Context, b Bundle, c model.ObservationCase, expected int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
@@ -549,7 +627,10 @@ func (r *Repository) SaveBundleAndCase(_ context.Context, b Bundle, c model.Obse
 	r.persist()
 	return nil
 }
-func (r *Repository) GetBundle(_ context.Context, id string) (Bundle, error) {
+func (r *Repository) GetBundle(ctx context.Context, id string) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	b, ok := r.bundles[id]
@@ -558,7 +639,10 @@ func (r *Repository) GetBundle(_ context.Context, id string) (Bundle, error) {
 	}
 	return b, nil
 }
-func (r *Repository) IncrementDownload(_ context.Context, id string) (Bundle, error) {
+func (r *Repository) IncrementDownload(ctx context.Context, id string) (Bundle, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	b, ok := r.bundles[id]
@@ -570,7 +654,10 @@ func (r *Repository) IncrementDownload(_ context.Context, id string) (Bundle, er
 	r.persist()
 	return b, nil
 }
-func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprint, actor string) (Bundle, bool, error) {
+func (r *Repository) RecordDownload(ctx context.Context, id, requestID, fingerprint, actor string) (Bundle, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return Bundle{}, false, err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	b, ok := r.bundles[id]
@@ -600,20 +687,29 @@ func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprin
 	r.persist()
 	return b, true, nil
 }
-func (r *Repository) AddAudit(_ context.Context, e model.AuditEvent) error {
+func (r *Repository) AddAudit(ctx context.Context, e model.AuditEvent) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.audits[e.CaseID] = append(r.audits[e.CaseID], e)
 	r.persist()
 	return nil
 }
-func (r *Repository) ListAudit(_ context.Context, id string) ([]model.AuditEvent, error) {
+func (r *Repository) ListAudit(ctx context.Context, id string) ([]model.AuditEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return append([]model.AuditEvent(nil), r.audits[id]...), nil
 }
 
-func (r *Repository) FindAuditByRequest(_ context.Context, requestID string) []model.AuditEvent {
+func (r *Repository) FindAuditByRequest(ctx context.Context, requestID string) []model.AuditEvent {
+	if err := ctx.Err(); err != nil {
+		return nil
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := []model.AuditEvent{}
@@ -632,7 +728,10 @@ func (r *Repository) FindAuditByRequest(_ context.Context, requestID string) []m
 	})
 	return out
 }
-func (r *Repository) Idempotent(_ context.Context, id, fp string) (string, error) {
+func (r *Repository) Idempotent(ctx context.Context, id, fp string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	x, ok := r.idem[id]
@@ -644,14 +743,19 @@ func (r *Repository) Idempotent(_ context.Context, id, fp string) (string, error
 	}
 	return x.Response, nil
 }
-func (r *Repository) PutIdempotent(_ context.Context, id, fp, resp string) error {
+func (r *Repository) PutIdempotent(ctx context.Context, id, fp, resp string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.idem[id] = entry{fp, resp}
 	r.persist()
 	return nil
 }
-func (r *Repository) Health(_ context.Context) error { return nil }
+func (r *Repository) Health(ctx context.Context) error {
+	return ctx.Err()
+}
 func (r *Repository) persist() {
 	if r.path == "" || r.path == ":memory:" {
 		return
