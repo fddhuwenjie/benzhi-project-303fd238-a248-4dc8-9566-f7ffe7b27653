@@ -22,6 +22,28 @@ type Service struct {
 
 var ErrDeclarationConflict = errors.New("签署声明确认码不匹配")
 
+// replayReview decodes a cached idempotent response into a QualityReview so
+// that replays return the exact first-success response instead of re-reading
+// a resource that may have since been mutated.
+func replayReview(cached string) (QualityReview, error) {
+	var q QualityReview
+	if e := repository.DecodeResponse(cached, &q); e != nil {
+		return QualityReview{}, e
+	}
+	return q, nil
+}
+
+// replayBundle decodes a cached idempotent response into a Bundle so that
+// replays return the exact first-success response instead of re-reading a
+// resource that may have since been mutated.
+func replayBundle(cached string) (repository.Bundle, error) {
+	var b repository.Bundle
+	if e := repository.DecodeResponse(cached, &b); e != nil {
+		return repository.Bundle{}, e
+	}
+	return b, nil
+}
+
 func addAgg(m map[string]*model.RuleAggregate, sensor, rule string, passed bool, score int) {
 	k := sensor + "\x00" + rule
 	a := m[k]
@@ -89,7 +111,7 @@ func (s *Service) screen(ctx context.Context, id, actor, requestID string, expec
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return QualityReview{}, e
 		} else if old != "" {
-			return s.Repo.GetReview(ctx, id)
+			return replayReview(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -210,7 +232,7 @@ func (s *Service) screen(ctx context.Context, id, actor, requestID string, expec
 	_ = s.Repo.SaveReviewSnapshot(ctx, q)
 	_, e = s.Audit.Append(ctx, id, requestID, "quality_screen", actor, string(from), string(c.Status), map[string]interface{}{"profile_id": profile.ProfileID, "profile_version": profile.Version, "rule_fingerprint": q.RuleFingerprint, "results": results})
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(q))
 	}
 	return q, e
 }
@@ -264,7 +286,7 @@ func (s *Service) Review(ctx context.Context, id string, in ReviewInput, expecte
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return QualityReview{}, e
 		} else if old != "" {
-			return s.Repo.GetReview(ctx, id)
+			return replayReview(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -369,7 +391,7 @@ func (s *Service) Review(ctx context.Context, id string, in ReviewInput, expecte
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "review_anomaly", in.Reviewer, string(observation.StatusScreened), string(c.Status), in)
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(q))
 	}
 	return q, e
 }
@@ -386,7 +408,7 @@ func (s *Service) Sign(ctx context.Context, id string, in SignInput, expected in
 		if old, er := s.Repo.Idempotent(ctx, requestID, fp); er != nil {
 			return QualityReview{}, er
 		} else if old != "" {
-			return s.Repo.GetReview(ctx, id)
+			return replayReview(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -458,7 +480,7 @@ func (s *Service) Sign(ctx context.Context, id string, in SignInput, expected in
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "sign_quality", in.Reviewer, string(from), string(c.Status), map[string]interface{}{"grade": in.Grade, "declaration_token_digest": audit.ManifestDigest(in.Token), "declaration_digest": q.DeclarationDigest})
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(q))
 	}
 	return q, e
 }
@@ -516,7 +538,7 @@ func (s *Service) FreezeWithPartPreview(ctx context.Context, id, actor, requestI
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return repository.Bundle{}, e
 		} else if old != "" {
-			return s.Repo.GetBundle(ctx, id)
+			return replayBundle(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -557,7 +579,7 @@ func (s *Service) FreezeWithPartPreview(ctx context.Context, id, actor, requestI
 		return b, e
 	}
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, b.BundleID)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(b))
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "freeze_release", actor, string(from), string(c.Status), manifest)
 	return b, e

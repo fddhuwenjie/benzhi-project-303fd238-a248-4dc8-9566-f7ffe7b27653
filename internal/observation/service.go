@@ -12,6 +12,17 @@ import (
 	"time"
 )
 
+// replayCase decodes a cached idempotent response into an ObservationCase so
+// that replays return the exact first-success response instead of re-reading
+// a resource that may have since been mutated.
+func replayCase(cached string) (ObservationCase, error) {
+	var c ObservationCase
+	if e := repository.DecodeResponse(cached, &c); e != nil {
+		return ObservationCase{}, e
+	}
+	return c, nil
+}
+
 type Service struct {
 	Repo              *repository.Repository
 	Audit             *audit.Service
@@ -69,7 +80,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, requestID string) 
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return ObservationCase{}, e
 		} else if old != "" {
-			return s.Repo.GetCase(ctx, old)
+			return replayCase(old)
 		}
 	}
 	var fields []string
@@ -110,7 +121,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput, requestID string) 
 		return c, e
 	}
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, c.CaseID)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(c))
 	}
 	_, e = s.Audit.Append(ctx, c.CaseID, requestID, "create_case", in.CreatedBy, "", string(c.Status), in)
 	return c, e
@@ -133,7 +144,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, id string, in MetadataPatc
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return ObservationCase{}, e
 		} else if old != "" {
-			return s.Repo.GetCase(ctx, id)
+			return replayCase(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -187,7 +198,7 @@ func (s *Service) UpdateMetadata(ctx context.Context, id string, in MetadataPatc
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "metadata_update", actor, string(c.Status), string(c.Status), map[string]interface{}{"before": metadataSummary(old), "after": metadataSummary(c)})
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(c))
 	}
 	return c, e
 }
@@ -202,7 +213,7 @@ func (s *Service) SupersedeEvidence(ctx context.Context, id string, in Supersede
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return ObservationCase{}, nil, e
 		} else if old != "" {
-			c, e := s.Repo.GetCase(ctx, id)
+			c, e := replayCase(old)
 			return c, nil, e
 		}
 	}
@@ -281,7 +292,7 @@ func (s *Service) SupersedeEvidence(ctx context.Context, id string, in Supersede
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "evidence_supersede", actor, string(from), string(c.Status), map[string]interface{}{"old": map[string]interface{}{"evidence_id": old.EvidenceID, "sensor_id": old.SensorID, "audio_digest": old.AudioDigest}, "new": map[string]interface{}{"evidence_id": replacement.EvidenceID, "sensor_id": replacement.SensorID, "audio_digest": replacement.AudioDigest}, "reason": in.Reason})
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(c))
 	}
 	return c, nil, e
 }
@@ -298,7 +309,7 @@ func (s *Service) AddEvidenceBatch(ctx context.Context, id string, batch Evidenc
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return ObservationCase{}, e
 		} else if old != "" {
-			return s.Repo.GetCase(ctx, old)
+			return replayCase(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -368,7 +379,7 @@ func (s *Service) AddEvidenceBatch(ctx context.Context, id string, batch Evidenc
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "submit_evidence", actor, string(from), string(c.Status), batch)
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(c))
 	}
 	return c, e
 }
@@ -391,7 +402,7 @@ func (s *Service) AddVerificationNote(ctx context.Context, id, note, actor, requ
 		if old, e := s.Repo.Idempotent(ctx, requestID, fp); e != nil {
 			return ObservationCase{}, e
 		} else if old != "" {
-			return s.Repo.GetCase(ctx, id)
+			return replayCase(old)
 		}
 	}
 	c, e := s.Repo.GetCase(ctx, id)
@@ -414,7 +425,7 @@ func (s *Service) AddVerificationNote(ctx context.Context, id, note, actor, requ
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "evidence_note", actor, string(c.Status), string(c.Status), map[string]string{"note": note})
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+		_ = s.Repo.PutIdempotent(ctx, requestID, fp, repository.EncodeResponse(c))
 	}
 	return c, e
 }

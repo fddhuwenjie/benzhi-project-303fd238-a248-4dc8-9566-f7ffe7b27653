@@ -660,3 +660,17 @@ func (r *Repository) persist() {
 	_ = os.WriteFile(r.path, b, 0600)
 }
 func Fingerprint(v interface{}) string { b, _ := json.Marshal(v); return fmt.Sprintf("%x", b) }
+
+// EncodeResponse serializes a response payload for idempotent replay caching.
+// The cached payload is returned verbatim on subsequent replays with the same
+// request id and fingerprint, ensuring the replayed response reflects the
+// first successful call rather than any later resource mutations.
+func EncodeResponse(v interface{}) string {
+	b, _ := json.Marshal(v)
+	return string(b)
+}
+
+// DecodeResponse deserializes a cached idempotent response payload.
+func DecodeResponse(s string, v interface{}) error {
+	return json.Unmarshal([]byte(s), v)
+}
