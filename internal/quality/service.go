@@ -207,12 +207,19 @@ func (s *Service) screen(ctx context.Context, id, actor, requestID string, expec
 	if e = s.Repo.SaveReviewAndCase(ctx, q, c, expected, false); e != nil {
 		return q, e
 	}
-	_ = s.Repo.SaveReviewSnapshot(ctx, q)
-	_, e = s.Audit.Append(ctx, id, requestID, "quality_screen", actor, string(from), string(c.Status), map[string]interface{}{"profile_id": profile.ProfileID, "profile_version": profile.Version, "rule_fingerprint": q.RuleFingerprint, "results": results})
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e = s.Repo.SaveReviewSnapshot(ctx, q); e != nil {
+		return q, e
 	}
-	return q, e
+	_, e = s.Audit.Append(ctx, id, requestID, "quality_screen", actor, string(from), string(c.Status), map[string]interface{}{"profile_id": profile.ProfileID, "profile_version": profile.Version, "rule_fingerprint": q.RuleFingerprint, "results": results})
+	if e != nil {
+		return q, e
+	}
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return q, pe
+		}
+	}
+	return q, nil
 }
 
 func (s *Service) ClaimReview(ctx context.Context, id, actor, requestID string, expected int) (repository.ReviewClaim, error) {
@@ -368,10 +375,15 @@ func (s *Service) Review(ctx context.Context, id string, in ReviewInput, expecte
 		return q, e
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "review_anomaly", in.Reviewer, string(observation.StatusScreened), string(c.Status), in)
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return q, e
 	}
-	return q, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return q, pe
+		}
+	}
+	return q, nil
 }
 func (s *Service) Sign(ctx context.Context, id string, in SignInput, expected int, requestID string) (QualityReview, error) {
 	if in.Token == "" {
@@ -457,10 +469,15 @@ func (s *Service) Sign(ctx context.Context, id string, in SignInput, expected in
 		return q, e
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "sign_quality", in.Reviewer, string(from), string(c.Status), map[string]interface{}{"grade": in.Grade, "declaration_token_digest": audit.ManifestDigest(in.Token), "declaration_digest": q.DeclarationDigest})
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return q, e
 	}
-	return q, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return q, pe
+		}
+	}
+	return q, nil
 }
 func (s *Service) Freeze(ctx context.Context, id, actor, requestID string, expected int) (repository.Bundle, error) {
 	return s.FreezeWithPreview(ctx, id, actor, requestID, expected, "")
@@ -557,7 +574,9 @@ func (s *Service) FreezeWithPartPreview(ctx context.Context, id, actor, requestI
 		return b, e
 	}
 	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, b.BundleID)
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, b.BundleID); pe != nil {
+			return b, pe
+		}
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "freeze_release", actor, string(from), string(c.Status), manifest)
 	return b, e

@@ -126,10 +126,10 @@ func (s *Server) cases(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(e.Error(), "重叠") {
 				code = 409
 				pre := s.Obs.Precheck(r.Context(), in)
-				write(w, map[string]interface{}{"error": e.Error(), "conflicts": pre.Conflicts, "valid": false}, code)
+				write(w, map[string]interface{}{"error": e.Error(), "conflicts": pre.Conflicts, "valid": false}, errorStatus(e, code))
 				return
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 201)
@@ -178,7 +178,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrNotFound) {
 				code = 404
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 200)
@@ -208,7 +208,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrIdempotency) {
 				code = 409
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 200)
@@ -234,7 +234,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrIdempotency) {
 				code = 409
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 200)
@@ -263,7 +263,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrNotFound) {
 				code = 404
 			}
-			write(w, map[string]interface{}{"error": e.Error(), "references": refs}, code)
+			write(w, map[string]interface{}{"error": e.Error(), "references": refs}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 200)
@@ -289,7 +289,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrNotFound) {
 				code = 404
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, c, 200)
@@ -320,7 +320,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrIdempotency) {
 				code = 409
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, q, 200)
@@ -339,6 +339,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrNotFound) {
 				code = 404
 			}
+			code = errorStatus(e, code)
 			if ce != nil {
 				write(w, map[string]interface{}{"error": e.Error(), "claim": ce.Claim, "remaining_seconds": int64(time.Until(ce.Claim.LeaseUntil).Seconds())}, code)
 			} else {
@@ -357,7 +358,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.As(e, &ce) {
 				code = 409
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, claim, 200)
@@ -433,10 +434,10 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			}
 			var ce *repository.ClaimConflictError
 			if errors.As(e, &ce) {
-				write(w, map[string]interface{}{"error": e.Error(), "claim": ce.Claim, "remaining_seconds": int64(time.Until(ce.Claim.LeaseUntil).Seconds())}, 409)
+				write(w, map[string]interface{}{"error": e.Error(), "claim": ce.Claim, "remaining_seconds": int64(time.Until(ce.Claim.LeaseUntil).Seconds())}, errorStatus(e, 409))
 				return
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, q, 200)
@@ -468,7 +469,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, quality.ErrDeclarationConflict) {
 				code = 409
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		write(w, q, 200)
@@ -493,7 +494,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 				write(w, map[string]interface{}{"error": e.Error(), "preview_stale": true, "differences": me.Differences}, 409)
 				return
 			}
-			write(w, map[string]string{"error": e.Error()}, 409)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, 409))
 			return
 		}
 		write(w, b, 200)
@@ -635,7 +636,7 @@ func (s *Server) caseRoutes(w http.ResponseWriter, r *http.Request) {
 			if errors.Is(e, repository.ErrNotFound) {
 				code = 404
 			}
-			write(w, map[string]string{"error": e.Error()}, code)
+			write(w, map[string]string{"error": e.Error()}, errorStatus(e, code))
 			return
 		}
 		if inc {

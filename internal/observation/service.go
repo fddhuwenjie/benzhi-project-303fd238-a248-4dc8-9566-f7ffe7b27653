@@ -109,11 +109,16 @@ func (s *Service) Create(ctx context.Context, in CreateInput, requestID string) 
 	if e = s.Repo.SaveCaseNoOverlap(ctx, c, 0); e != nil {
 		return c, e
 	}
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, c.CaseID)
-	}
 	_, e = s.Audit.Append(ctx, c.CaseID, requestID, "create_case", in.CreatedBy, "", string(c.Status), in)
-	return c, e
+	if e != nil {
+		return c, e
+	}
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, c.CaseID); pe != nil {
+			return c, pe
+		}
+	}
+	return c, nil
 }
 
 func metadataSummary(c ObservationCase) map[string]interface{} {
@@ -186,10 +191,15 @@ func (s *Service) UpdateMetadata(ctx context.Context, id string, in MetadataPatc
 		return old, e
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "metadata_update", actor, string(c.Status), string(c.Status), map[string]interface{}{"before": metadataSummary(old), "after": metadataSummary(c)})
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return c, e
 	}
-	return c, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return c, pe
+		}
+	}
+	return c, nil
 }
 
 func (s *Service) SupersedeEvidence(ctx context.Context, id string, in SupersedeInput, expected int, requestID, actor string) (ObservationCase, []string, error) {
@@ -280,10 +290,15 @@ func (s *Service) SupersedeEvidence(ctx context.Context, id string, in Supersede
 		return c, nil, e
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "evidence_supersede", actor, string(from), string(c.Status), map[string]interface{}{"old": map[string]interface{}{"evidence_id": old.EvidenceID, "sensor_id": old.SensorID, "audio_digest": old.AudioDigest}, "new": map[string]interface{}{"evidence_id": replacement.EvidenceID, "sensor_id": replacement.SensorID, "audio_digest": replacement.AudioDigest}, "reason": in.Reason})
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return c, nil, e
 	}
-	return c, nil, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return c, nil, pe
+		}
+	}
+	return c, nil, nil
 }
 func (s *Service) AddEvidence(ctx context.Context, id string, in EvidenceInput, expected int, requestID string) (ObservationCase, error) {
 	return s.AddEvidenceBatch(ctx, id, EvidenceBatchInput{Items: []EvidenceInput{in}}, expected, requestID)
@@ -367,10 +382,15 @@ func (s *Service) AddEvidenceBatch(ctx context.Context, id string, batch Evidenc
 		actor = batch.Items[0].Operator
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "submit_evidence", actor, string(from), string(c.Status), batch)
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return c, e
 	}
-	return c, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return c, pe
+		}
+	}
+	return c, nil
 }
 func (s *Service) Get(ctx context.Context, id string) (ObservationCase, error) {
 	return s.Repo.GetCase(ctx, id)
@@ -413,10 +433,15 @@ func (s *Service) AddVerificationNote(ctx context.Context, id, note, actor, requ
 		return c, e
 	}
 	_, e = s.Audit.Append(ctx, id, requestID, "evidence_note", actor, string(c.Status), string(c.Status), map[string]string{"note": note})
-	if requestID != "" {
-		_ = s.Repo.PutIdempotent(ctx, requestID, fp, id)
+	if e != nil {
+		return c, e
 	}
-	return c, e
+	if requestID != "" {
+		if pe := s.Repo.PutIdempotent(ctx, requestID, fp, id); pe != nil {
+			return c, pe
+		}
+	}
+	return c, nil
 }
 func (s *Service) EvidenceReport(ctx context.Context, id string, sensorID string, evidenceID string) (EvidenceReport, interface{}, error) {
 	return s.EvidenceReportCoverage(ctx, id, sensorID, evidenceID, false)

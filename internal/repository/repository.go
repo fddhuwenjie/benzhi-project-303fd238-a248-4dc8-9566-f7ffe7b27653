@@ -16,6 +16,12 @@ import (
 var ErrNotFound = errors.New("not found")
 var ErrRevision = errors.New("revision conflict")
 var ErrIdempotency = errors.New("request replay conflict")
+var ErrPersistence = errors.New("persistence failed")
+
+// IsPersistenceError reports whether err originated from a failed write to the
+// backing file. Callers can use errors.Is(err, repository.ErrPersistence) to
+// surface a concrete persistence failure instead of a silent success.
+func IsPersistenceError(err error) bool { return errors.Is(err, ErrPersistence) }
 
 type Repository struct {
 	mu        sync.RWMutex
@@ -108,8 +114,14 @@ func (r *Repository) Close() error {
 	if r.path == "" || r.path == ":memory:" {
 		return nil
 	}
-	b, _ := json.Marshal(r)
-	return os.WriteFile(r.path, b, 0600)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPersistence, err)
+	}
+	if err := os.WriteFile(r.path, b, 0600); err != nil {
+		return fmt.Errorf("%w: %v", ErrPersistence, err)
+	}
+	return nil
 }
 func (r *Repository) DB() interface{} { return nil }
 func (r *Repository) SaveCase(_ context.Context, c model.ObservationCase, expected int) error {
@@ -118,8 +130,12 @@ func (r *Repository) SaveCase(_ context.Context, c model.ObservationCase, expect
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
 		return ErrRevision
 	}
+	prev := r.cases[c.CaseID]
 	r.cases[c.CaseID] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[c.CaseID] = prev
+		return err
+	}
 	return nil
 }
 func (r *Repository) SaveCaseNoOverlap(_ context.Context, c model.ObservationCase, expected int) error {
@@ -136,8 +152,12 @@ func (r *Repository) SaveCaseNoOverlap(_ context.Context, c model.ObservationCas
 			return errors.New("浮标与既有个案时段重叠")
 		}
 	}
+	prev := r.cases[c.CaseID]
 	r.cases[c.CaseID] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[c.CaseID] = prev
+		return err
+	}
 	return nil
 }
 
@@ -157,7 +177,10 @@ func (r *Repository) SaveMetadataNoOverlap(_ context.Context, c model.Observatio
 		}
 	}
 	r.cases[c.CaseID] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[c.CaseID] = old
+		return err
+	}
 	return nil
 }
 func (r *Repository) GetCase(_ context.Context, id string) (model.ObservationCase, error) {
@@ -278,15 +301,23 @@ func (r *Repository) QueryCases(_ context.Context, f CaseFilter) (CasePage, erro
 func (r *Repository) SaveEvidence(_ context.Context, e model.CalibrationEvidence) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev := r.evidence[e.CaseID]
 	r.evidence[e.CaseID] = append(r.evidence[e.CaseID], e)
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.evidence[e.CaseID] = prev
+		return err
+	}
 	return nil
 }
 func (r *Repository) SaveEvidenceBatch(_ context.Context, id string, evs []model.CalibrationEvidence) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev := r.evidence[id]
 	r.evidence[id] = append(r.evidence[id], evs...)
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.evidence[id] = prev
+		return err
+	}
 	return nil
 }
 func (r *Repository) SaveEvidenceAndCase(_ context.Context, id string, evs []model.CalibrationEvidence, c model.ObservationCase, expected int) error {
@@ -295,9 +326,15 @@ func (r *Repository) SaveEvidenceAndCase(_ context.Context, id string, evs []mod
 	if expected > 0 && r.cases[id].Revision != expected {
 		return ErrRevision
 	}
+	prevCase := r.cases[id]
+	prevEvidence := r.evidence[id]
 	r.evidence[id] = append(r.evidence[id], evs...)
 	r.cases[id] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[id] = prevCase
+		r.evidence[id] = prevEvidence
+		return err
+	}
 	return nil
 }
 func (r *Repository) HasOverlap(_ context.Context, buoy string, start, end time.Time) (bool, error) {
@@ -372,6 +409,9 @@ func (r *Repository) SupersedeEvidence(_ context.Context, id, oldID string, repl
 	if r.evidence[id][idx].Withdrawn {
 		return errors.New("证据已撤回")
 	}
+	prevCase := r.cases[id]
+	prevEvidence := append([]model.CalibrationEvidence(nil), r.evidence[id]...)
+	prevReview, hadReview := r.reviews[id]
 	old := r.evidence[id][idx]
 	old.Withdrawn = true
 	old.WithdrawnReason = replacement.WithdrawnReason
@@ -388,7 +428,16 @@ func (r *Repository) SupersedeEvidence(_ context.Context, id, oldID string, repl
 		r.reviews[id] = q
 	}
 	r.cases[id] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[id] = prevCase
+		r.evidence[id] = prevEvidence
+		if hadReview {
+			r.reviews[id] = prevReview
+		} else {
+			delete(r.reviews, id)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -427,8 +476,16 @@ func (r *Repository) EvidenceReferences(_ context.Context, id, evidenceID string
 func (r *Repository) SaveReview(_ context.Context, q model.QualityReview) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev, hadPrev := r.reviews[q.CaseID]
 	r.reviews[q.CaseID] = q
-	r.persist()
+	if err := r.persist(); err != nil {
+		if hadPrev {
+			r.reviews[q.CaseID] = prev
+		} else {
+			delete(r.reviews, q.CaseID)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -438,12 +495,30 @@ func (r *Repository) SaveReviewAndCase(_ context.Context, q model.QualityReview,
 	if r.cases[c.CaseID].Revision != expected {
 		return ErrRevision
 	}
+	prevCase := r.cases[c.CaseID]
+	prevReview, hadReview := r.reviews[q.CaseID]
+	var prevClaim ReviewClaim
+	hadClaim := false
+	if clearClaim {
+		prevClaim, hadClaim = r.claims[c.CaseID]
+	}
 	r.reviews[q.CaseID] = q
 	r.cases[c.CaseID] = c
 	if clearClaim {
 		delete(r.claims, c.CaseID)
 	}
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[c.CaseID] = prevCase
+		if hadReview {
+			r.reviews[q.CaseID] = prevReview
+		} else {
+			delete(r.reviews, q.CaseID)
+		}
+		if hadClaim {
+			r.claims[c.CaseID] = prevClaim
+		}
+		return err
+	}
 	return nil
 }
 
@@ -468,7 +543,14 @@ func (r *Repository) ClaimReview(_ context.Context, id, actor string, expected i
 	}
 	claim := ReviewClaim{CaseID: id, Actor: actor, ClaimedRevision: expected, ClaimedAt: claimedAt, LeaseUntil: now.Add(lease)}
 	r.claims[id] = claim
-	r.persist()
+	if err := r.persist(); err != nil {
+		if exists {
+			r.claims[id] = old
+		} else {
+			delete(r.claims, id)
+		}
+		return ReviewClaim{}, false, err
+	}
 	return claim, actionReassign, nil
 }
 
@@ -502,14 +584,21 @@ func (r *Repository) ReleaseReviewClaim(_ context.Context, id, actor string) (Re
 		return c, &ClaimConflictError{Claim: c}
 	}
 	delete(r.claims, id)
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.claims[id] = c
+		return ReviewClaim{}, err
+	}
 	return c, nil
 }
 func (r *Repository) SaveReviewSnapshot(_ context.Context, q model.QualityReview) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev := r.history[q.CaseID]
 	r.history[q.CaseID] = append(r.history[q.CaseID], q)
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.history[q.CaseID] = prev
+		return err
+	}
 	return nil
 }
 func (r *Repository) SaveScreenSnapshot(ctx context.Context, q model.QualityReview) error {
@@ -534,8 +623,16 @@ func (r *Repository) GetReview(_ context.Context, id string) (model.QualityRevie
 func (r *Repository) SaveBundle(_ context.Context, b Bundle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev, hadPrev := r.bundles[b.CaseID]
 	r.bundles[b.CaseID] = b
-	r.persist()
+	if err := r.persist(); err != nil {
+		if hadPrev {
+			r.bundles[b.CaseID] = prev
+		} else {
+			delete(r.bundles, b.CaseID)
+		}
+		return err
+	}
 	return nil
 }
 func (r *Repository) SaveBundleAndCase(_ context.Context, b Bundle, c model.ObservationCase, expected int) error {
@@ -544,9 +641,19 @@ func (r *Repository) SaveBundleAndCase(_ context.Context, b Bundle, c model.Obse
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
 		return ErrRevision
 	}
+	prevCase := r.cases[c.CaseID]
+	prevBundle, hadBundle := r.bundles[b.CaseID]
 	r.bundles[b.CaseID] = b
 	r.cases[c.CaseID] = c
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.cases[c.CaseID] = prevCase
+		if hadBundle {
+			r.bundles[b.CaseID] = prevBundle
+		} else {
+			delete(r.bundles, b.CaseID)
+		}
+		return err
+	}
 	return nil
 }
 func (r *Repository) GetBundle(_ context.Context, id string) (Bundle, error) {
@@ -565,9 +672,13 @@ func (r *Repository) IncrementDownload(_ context.Context, id string) (Bundle, er
 	if !ok {
 		return b, ErrNotFound
 	}
+	prev := b
 	b.DownloadCount++
 	r.bundles[id] = b
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.bundles[id] = prev
+		return Bundle{}, err
+	}
 	return b, nil
 }
 func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprint, actor string) (Bundle, bool, error) {
@@ -587,6 +698,13 @@ func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprin
 			}
 			return b, false, nil
 		}
+	}
+	prevBundle := b
+	prevDownloads := r.downloads[id]
+	var prevRequestFingerprint string
+	hadRequest := false
+	if requestID != "" {
+		prevRequestFingerprint, hadRequest = r.downloads[id][requestID]
 		r.downloads[id][requestID] = fingerprint
 	}
 	b.DownloadCount++
@@ -597,14 +715,28 @@ func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprin
 	}
 	b.DownloadActors[actor]++
 	r.bundles[id] = b
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.bundles[id] = prevBundle
+		if hadRequest {
+			r.downloads[id][requestID] = prevRequestFingerprint
+		} else if prevDownloads == nil {
+			delete(r.downloads, id)
+		} else {
+			r.downloads[id] = prevDownloads
+		}
+		return Bundle{}, false, err
+	}
 	return b, true, nil
 }
 func (r *Repository) AddAudit(_ context.Context, e model.AuditEvent) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev := r.audits[e.CaseID]
 	r.audits[e.CaseID] = append(r.audits[e.CaseID], e)
-	r.persist()
+	if err := r.persist(); err != nil {
+		r.audits[e.CaseID] = prev
+		return err
+	}
 	return nil
 }
 func (r *Repository) ListAudit(_ context.Context, id string) ([]model.AuditEvent, error) {
@@ -647,16 +779,30 @@ func (r *Repository) Idempotent(_ context.Context, id, fp string) (string, error
 func (r *Repository) PutIdempotent(_ context.Context, id, fp, resp string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prev, hadPrev := r.idem[id]
 	r.idem[id] = entry{fp, resp}
-	r.persist()
+	if err := r.persist(); err != nil {
+		if hadPrev {
+			r.idem[id] = prev
+		} else {
+			delete(r.idem, id)
+		}
+		return err
+	}
 	return nil
 }
 func (r *Repository) Health(_ context.Context) error { return nil }
-func (r *Repository) persist() {
+func (r *Repository) persist() error {
 	if r.path == "" || r.path == ":memory:" {
-		return
+		return nil
 	}
-	b, _ := json.Marshal(r)
-	_ = os.WriteFile(r.path, b, 0600)
+	b, err := json.Marshal(r)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPersistence, err)
+	}
+	if err := os.WriteFile(r.path, b, 0600); err != nil {
+		return fmt.Errorf("%w: %v", ErrPersistence, err)
+	}
+	return nil
 }
 func Fingerprint(v interface{}) string { b, _ := json.Marshal(v); return fmt.Sprintf("%x", b) }
