@@ -534,7 +534,7 @@ func (r *Repository) GetReview(_ context.Context, id string) (model.QualityRevie
 func (r *Repository) SaveBundle(_ context.Context, b Bundle) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.bundles[b.CaseID] = b
+	r.bundles[b.CaseID] = cloneBundle(b)
 	r.persist()
 	return nil
 }
@@ -544,7 +544,7 @@ func (r *Repository) SaveBundleAndCase(_ context.Context, b Bundle, c model.Obse
 	if expected > 0 && r.cases[c.CaseID].Revision != expected {
 		return ErrRevision
 	}
-	r.bundles[b.CaseID] = b
+	r.bundles[b.CaseID] = cloneBundle(b)
 	r.cases[c.CaseID] = c
 	r.persist()
 	return nil
@@ -556,7 +556,7 @@ func (r *Repository) GetBundle(_ context.Context, id string) (Bundle, error) {
 	if !ok {
 		return b, ErrNotFound
 	}
-	return b, nil
+	return cloneBundle(b), nil
 }
 func (r *Repository) IncrementDownload(_ context.Context, id string) (Bundle, error) {
 	r.mu.Lock()
@@ -565,10 +565,11 @@ func (r *Repository) IncrementDownload(_ context.Context, id string) (Bundle, er
 	if !ok {
 		return b, ErrNotFound
 	}
+	b = cloneBundle(b)
 	b.DownloadCount++
 	r.bundles[id] = b
 	r.persist()
-	return b, nil
+	return cloneBundle(b), nil
 }
 func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprint, actor string) (Bundle, bool, error) {
 	r.mu.Lock()
@@ -583,12 +584,13 @@ func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprin
 	if requestID != "" {
 		if old, ex := r.downloads[id][requestID]; ex {
 			if old != fingerprint {
-				return b, false, ErrIdempotency
+				return cloneBundle(b), false, ErrIdempotency
 			}
-			return b, false, nil
+			return cloneBundle(b), false, nil
 		}
 		r.downloads[id][requestID] = fingerprint
 	}
+	b = cloneBundle(b)
 	b.DownloadCount++
 	now := time.Now().UTC()
 	b.LastDownloadAt = &now
@@ -598,7 +600,7 @@ func (r *Repository) RecordDownload(_ context.Context, id, requestID, fingerprin
 	b.DownloadActors[actor]++
 	r.bundles[id] = b
 	r.persist()
-	return b, true, nil
+	return cloneBundle(b), true, nil
 }
 func (r *Repository) AddAudit(_ context.Context, e model.AuditEvent) error {
 	r.mu.Lock()
